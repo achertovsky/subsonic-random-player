@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/md5"
 	"crypto/rand"
@@ -236,7 +235,7 @@ func (m model) waitForControl() tea.Cmd {
 
 func (m model) handlePlayerControl(control playerControl) (tea.Model, tea.Cmd) {
 	listen := m.waitForControl()
-	switch control {
+	switch control.action {
 	case controlQuit:
 		return m, tea.Quit
 	case controlNext, controlPrevious:
