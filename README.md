@@ -1,5 +1,11 @@
 # Subsonic Random Player
 
+## only author note
+
+completely llm-generated. i do not take credit and wont fix a thing. it exist for personal usage
+
+## Player
+
 A small Linux terminal music player written in Go. It asks a Subsonic-compatible server (such as Navidrome) for a random song and streams it through `mpv`.
 
 ## Requirements
