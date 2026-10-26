@@ -58,6 +58,7 @@ type apiEnvelope struct {
 type mpv struct {
 	cmd        *exec.Cmd
 	socketPath string
+	trackEnded chan struct{}
 }
 
 type model struct {
@@ -72,6 +73,7 @@ type model struct {
 
 type trackLoaded Track
 type loadFailed error
+type trackEnded struct{}
 
 func main() {
 	cfg, err := readConfig()
@@ -150,11 +152,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if err := m.player.command("loadfile", streamURL, "replace"); err != nil {
 			m.err = "mpv: " + err.Error()
 			m.playing = false
+			return m, nil
 		}
-		return m, nil
+		return m, m.player.waitForTrackEnd()
 	case loadFailed:
 		m.loading = false
 		m.err = msg.Error()
+		return m, nil
+	case trackEnded:
+		if !m.loading {
+			m.loading = true
+			m.playing = false
+			m.err = ""
+			return m, fetchRandom(m.cfg)
+		}
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -312,12 +323,18 @@ func startMPV() (*mpv, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("could not start mpv: %w", err)
 	}
-	p := &mpv{cmd: cmd, socketPath: socketPath}
+	p := &mpv{cmd: cmd, socketPath: socketPath, trackEnded: make(chan struct{}, 1)}
 
 	deadline := time.Now().Add(4 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(socketPath); err == nil {
 			if err := p.command("set_property", "volume", 70); err == nil {
+				if err := p.startTrackEndListener(); err != nil {
+					_ = cmd.Process.Kill()
+					_ = cmd.Wait()
+					_ = os.Remove(socketPath)
+					return nil, fmt.Errorf("could not listen for mpv playback events: %w", err)
+				}
 				return p, nil
 			}
 		}
@@ -329,6 +346,43 @@ func startMPV() (*mpv, error) {
 	_ = cmd.Process.Kill()
 	_ = cmd.Wait()
 	return nil, errors.New("mpv IPC socket did not become ready; check that mpv can start")
+}
+
+func (p *mpv) waitForTrackEnd() tea.Cmd {
+	return func() tea.Msg {
+		if _, ok := <-p.trackEnded; ok {
+			return trackEnded{}
+		}
+		return nil
+	}
+}
+
+func (p *mpv) startTrackEndListener() error {
+	conn, err := net.DialTimeout("unix", p.socketPath, time.Second)
+	if err != nil {
+		return err
+	}
+	go p.listenForTrackEnd(conn)
+	return nil
+}
+
+func (p *mpv) listenForTrackEnd(conn net.Conn) {
+	defer conn.Close()
+	defer close(p.trackEnded)
+
+	decoder := json.NewDecoder(conn)
+	for {
+		var event struct {
+			Event  string `json:"event"`
+			Reason string `json:"reason"`
+		}
+		if err := decoder.Decode(&event); err != nil {
+			return
+		}
+		if event.Event == "end-file" && event.Reason == "eof" {
+			p.trackEnded <- struct{}{}
+		}
+	}
 }
 
 func (p *mpv) command(args ...any) error {

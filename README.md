@@ -56,20 +56,20 @@ Download or clone this project, then run these commands from its directory:
 
 ```sh
 go mod tidy
-go build -o subsonic-random-player .
+go build -o music .
 ```
 
-This creates the executable `subsonic-random-player` in the current directory. To install it into your user's local binary directory:
+This creates the executable `music` in the current directory. To install it into your user's local binary directory:
 
 ```sh
 mkdir -p ~/.local/bin
-install -m 755 subsonic-random-player ~/.local/bin/
+install -m 755 music ~/.local/bin/
 ```
 
 Make sure `~/.local/bin` is in your `PATH`. Then run it from any directory:
 
 ```sh
-subsonic-random-player
+music
 ```
 
 Alternatively, run without creating a binary:
@@ -80,11 +80,12 @@ go run .
 
 ## Controls
 
-- `n` — play another random track
+- Tracks automatically continue with another random track when they finish
+- `n` — skip to another random track
 - `Space` — pause or resume
 - `+` / `-` — raise or lower volume
 - `q` — quit
 
 ## Current limitations
 
-This is a starter version: it selects one random song on startup and lets you request another manually. Automatic next-track playback and a persistent queue are not implemented yet. Playback is handled by `mpv` over its Unix socket IPC interface.
+This is a starter version: it selects a random song on startup and continues with another random song when playback finishes. A persistent queue is not implemented yet. Playback is handled by `mpv` over its Unix socket IPC interface.
