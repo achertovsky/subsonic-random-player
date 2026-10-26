@@ -62,13 +62,15 @@ type mpv struct {
 }
 
 type model struct {
-	cfg     Config
-	player  *mpv
-	track   Track
-	playing bool
-	loading bool
-	err     string
-	volume  int
+	cfg      Config
+	player   *mpv
+	mpris    *mprisService
+	controls chan playerControl
+	track    Track
+	playing  bool
+	loading  bool
+	err      string
+	volume   int
 }
 
 type trackLoaded Track
@@ -89,7 +91,22 @@ func main() {
 	}
 	defer player.stop()
 
-	m := model{cfg: cfg, player: player, loading: true, volume: 70}
+	controls := make(chan playerControl, 1)
+	mpris, err := startMPRIS(controls)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "MPRIS disabled:", err)
+	} else {
+		defer mpris.stop()
+	}
+
+	m := model{
+		cfg:      cfg,
+		player:   player,
+		mpris:    mpris,
+		controls: controls,
+		loading:  true,
+		volume:   70,
+	}
 	p := tea.NewProgram(m)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "TUI error:", err)
@@ -132,7 +149,7 @@ func configPath() (string, error) {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(fetchRandom(m.cfg), tea.SetWindowTitle("Subsonic Random Player"))
+	return tea.Batch(fetchRandom(m.cfg), m.waitForControl(), tea.SetWindowTitle("Subsonic Random Player"))
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -143,15 +160,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.playing = true
 		m.err = ""
+		m.syncMPRIS()
 		streamURL, err := makeStreamURL(m.cfg, t.ID)
 		if err != nil {
 			m.err = err.Error()
 			m.playing = false
+			m.syncMPRIS()
 			return m, nil
 		}
 		if err := m.player.command("loadfile", streamURL, "replace"); err != nil {
 			m.err = "mpv: " + err.Error()
 			m.playing = false
+			m.syncMPRIS()
 			return m, nil
 		}
 		return m, m.player.waitForTrackEnd()
@@ -164,9 +184,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading = true
 			m.playing = false
 			m.err = ""
+			m.syncMPRIS()
 			return m, fetchRandom(m.cfg)
 		}
 		return m, nil
+	case playerControl:
+		return m.handlePlayerControl(msg)
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
@@ -182,6 +205,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.err = "mpv: " + err.Error()
 			} else {
 				m.playing = !m.playing
+				m.syncMPRIS()
 			}
 		case "+", "=":
 			if m.volume < 100 {
@@ -189,6 +213,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if err := m.player.command("set_property", "volume", m.volume); err != nil {
 					m.err = "mpv: " + err.Error()
 				}
+				m.syncMPRIS()
 			}
 		case "-", "_":
 			if m.volume > 0 {
@@ -196,10 +221,56 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if err := m.player.command("set_property", "volume", m.volume); err != nil {
 					m.err = "mpv: " + err.Error()
 				}
+				m.syncMPRIS()
 			}
 		}
 	}
 	return m, nil
+}
+
+func (m model) waitForControl() tea.Cmd {
+	return func() tea.Msg {
+		return <-m.controls
+	}
+}
+
+func (m model) handlePlayerControl(control playerControl) (tea.Model, tea.Cmd) {
+	listen := m.waitForControl()
+	switch control {
+	case controlQuit:
+		return m, tea.Quit
+	case controlNext, controlPrevious:
+		if !m.loading {
+			m.loading = true
+			m.err = ""
+			return m, tea.Batch(listen, fetchRandom(m.cfg))
+		}
+	case controlPause:
+		if m.playing {
+			if err := m.player.command("set_property", "pause", true); err != nil {
+				m.err = "mpv: " + err.Error()
+			} else {
+				m.playing = false
+				m.syncMPRIS()
+			}
+		}
+	case controlPlay:
+		if !m.playing && !m.loading {
+			if err := m.player.command("set_property", "pause", false); err != nil {
+				m.err = "mpv: " + err.Error()
+			} else {
+				m.playing = true
+				m.syncMPRIS()
+			}
+		}
+	}
+	return m, listen
+}
+
+func (m model) syncMPRIS() {
+	if m.mpris != nil {
+		m.mpris.update(m.track, m.playing, m.volume)
+	}
 }
 
 func (m model) View() string {

@@ -80,6 +80,8 @@ go run .
 
 ## Controls
 
+- Ubuntu's sound menu can control playback through MPRIS:
+  next and previous choose another random track, and play/pause controls playback.
 - Tracks automatically continue with another random track when they finish
 - `n` — skip to another random track
 - `Space` — pause or resume
